@@ -1,0 +1,51 @@
+# ==========================================
+# CMake Build Artifacts & Output Directories
+# ==========================================
+build/
+CMakeCache.txt
+CMakeFiles/
+CMakeSettings.json
+cmake_install.cmake
+Makefile
+targets/
+
+# ==========================================
+# Compiled Binaries & Executables
+# ==========================================
+dqmc_simulation
+run_local_moment_scan
+test_lattice
+test_kinetic
+test_interaction
+test_greens
+test_sampler
+test_measurement
+benchmark_step1
+*.dSYM/
+*.o
+*.a
+*.so
+*.dylib
+
+# ==========================================
+# Simulation Outputs & CSV Data Logs
+# ==========================================
+*.csv
+*.dat
+*.log
+*.txt
+
+# ==========================================
+# IDE & System Specific Files
+# ==========================================
+.DS_Store
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# ==========================================
+# Dependencies (Optional Safety Net)
+# ==========================================
+# We explicitly allow external/eigen-3.4.0 since it is bundled in the repo
+!external/eigen-3.4.0/
