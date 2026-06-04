@@ -41,7 +41,7 @@ From a software engineering perspective, DQMC scales as $\mathcal{O}(L \cdot N^3
 
 ### Core Optimization Stack
 
-    1. **UDV Matrix Stabilization Loop (Numerical Invariance):**
+1. **UDV Matrix Stabilization Loop (Numerical Invariance):**
 To calculate $G$ without catastrophic floating-point truncation, the product chain $B_L \dots B_1$ is periodically re-orthogonalized via pivoted Householder QR decompositions, factoring the scales into a diagonal matrix $D$:
 
 $$B_L \dots B_1 = U \cdot D \cdot V$$
@@ -49,11 +49,14 @@ $$B_L \dots B_1 = U \cdot D \cdot V$$
 
 
 This preserves a dynamic numerical range spanning hundreds of orders of magnitude within standard IEEE double-precision limits.
-    2. **Zero-Allocation Workspace Performance:**
+
+2. **Zero-Allocation Workspace Performance:**
 Memory allocations (`new` heap cycles) inside hot loops are completely eliminated. The `GreensEngine` manages persistent, mutable scratchpad matrices (`U_workspace_`, `V_workspace_`, etc.) allocated exactly once during initialization and reused continuously.
-    3. **Hardware-Accelerated Linear Algebra (BLAS Integration):**
+
+3. **Hardware-Accelerated Linear Algebra (BLAS Integration):**
 By compiling with the `EIGEN_USE_BLAS` preprocessor flag, Eigen's default C++ evaluation loops are bypassed. Heavy $\mathcal{O}(N^3)$ operations are offloaded directly to vendor-optimized BLAS backends. On macOS, this links directly to the **Apple Accelerate Framework (vecLib)**, utilizing hardware matrix coprocessors (AMX).
-    4. **Embarrassingly Parallel Markov Chains:**
+    
+4. **Embarrassingly Parallel Markov Chains:**
 Instead of introducing thread synchronization overhead within the strict sequential updates of a single configuration, the engine implements parallel Markov chains using **OpenMP**. The simulation forks independent, non-interacting paths across all available CPU threads using offset random seed arrays, combining normalized physical observables at the end of execution.
 
 ---
