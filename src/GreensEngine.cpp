@@ -1,6 +1,7 @@
 #include "GreensEngine.hpp"
 
 #include <unsupported/Eigen/MatrixFunctions>
+#include <Eigen/SVD>
 #include <stdexcept>
 #include <algorithm>
 
@@ -29,11 +30,9 @@ GreensEngine::GreensEngine(
     }
 
     if (stabilization_frequency_ <= 0) {
-        stabilization_frequency_ = num_slices_;
+        stabilization_frequency_ = 5;
     }
 
-    // IMPORTANT:
-    // If the DQMC formula uses exp(-Δτ K), then the caller must pass k = -Δτ K.
     exp_k_ = k.exp();
 
     G_up_ = Eigen::MatrixXd::Identity(num_sites_, num_sites_);
@@ -54,8 +53,6 @@ Eigen::MatrixXd GreensEngine::make_B_slice(
         );
     }
 
-    // B_l = exp(k) * exp(v_l).
-    // Since exp(v_l) is diagonal, multiply columns of exp(k).
     Eigen::MatrixXd B = exp_k_;
 
     for (int col = 0; col < num_sites_; ++col) {
@@ -72,18 +69,9 @@ Eigen::MatrixXd GreensEngine::compute_B_product(
     Eigen::MatrixXd product =
         Eigen::MatrixXd::Identity(num_sites_, num_sites_);
 
-    // Convention:
-    // product = B_{L-1} ... B_1 B_0.
-    //
-    // This matches the common DQMC equal-time convention where new slices
-    // multiply from the left.
     for (int l = 0; l < num_slices_; ++l) {
         Eigen::MatrixXd B_l = make_B_slice(config, l, spin_factor);
-        // product.noalias() = B_l * product;
-        // Do NOT use noalias here.
-        // product is both input and output.
         product = B_l * product;
-        
     }
 
     return product;
@@ -93,64 +81,92 @@ Eigen::MatrixXd GreensEngine::compute_stabilized_greens(
     const InteractionConfig& config,
     double spin_factor
 ) const {
-    // Thread-safe local workspaces.
-    Eigen::MatrixXd Q =
+    // Maintain:
+    //
+    //     P = B_{L-1} ... B_0 = U * D * Vt
+    //
+    // where U and Vt are well-conditioned orthogonal matrices,
+    // and D stores all large/small scales.
+
+    Eigen::MatrixXd U =
         Eigen::MatrixXd::Identity(num_sites_, num_sites_);
 
-    Eigen::MatrixXd R_total =
+    Eigen::VectorXd D =
+        Eigen::VectorXd::Ones(num_sites_);
+
+    Eigen::MatrixXd Vt =
         Eigen::MatrixXd::Identity(num_sites_, num_sites_);
 
-    int since_last_qr = 0;
+    Eigen::MatrixXd block =
+        Eigen::MatrixXd::Identity(num_sites_, num_sites_);
+
+    int block_count = 0;
 
     for (int l = 0; l < num_slices_; ++l) {
         Eigen::MatrixXd B_l = make_B_slice(config, l, spin_factor);
 
-        // Accumulate from the left:
-        // P_new = B_l * P_old.
-        Eigen::MatrixXd A = B_l * Q;
+        // Accumulate current unstabilized block from the left.
+        block = B_l * block;
+        block_count++;
 
-        ++since_last_qr;
+        if (
+            block_count >= stabilization_frequency_ ||
+            l == num_slices_ - 1
+        ) {
+            // New product:
+            //
+            //     P_new = block * U * D * Vt
+            //
+            // First form A = block * U * D.
+            Eigen::MatrixXd A = block * U;
 
-        if (since_last_qr >= stabilization_frequency_ ||
-            l == num_slices_ - 1) {
+            for (int col = 0; col < num_sites_; ++col) {
+                A.col(col) *= D(col);
+            }
 
-            Eigen::HouseholderQR<Eigen::MatrixXd> qr(A);
+            Eigen::JacobiSVD<Eigen::MatrixXd> svd(
+                A,
+                Eigen::ComputeFullU | Eigen::ComputeFullV
+            );
 
-            Eigen::MatrixXd Q_new =
-                qr.householderQ() *
-                Eigen::MatrixXd::Identity(num_sites_, num_sites_);
+            U = svd.matrixU();
+            D = svd.singularValues();
 
-            Eigen::MatrixXd R_new =
-                qr.matrixQR()
-                    .topRows(num_sites_)
-                    .template triangularView<Eigen::Upper>();
+            // A = U_new * D_new * V_block^T
+            // P_new = U_new * D_new * V_block^T * Vt_old
+            Vt = svd.matrixV().transpose() * Vt;
 
-            Q = Q_new;
-            R_total = R_new * R_total;
-
-            since_last_qr = 0;
-        } else {
-            Q = A;
+            block.setIdentity();
+            block_count = 0;
         }
     }
 
-    // We have approximately:
+    // We need:
     //
-    //     P = Q * R_total
+    //     G = (I + U D Vt)^(-1)
     //
-    // Need:
+    // Use the stable identity:
     //
-    //     G = (I + P)^(-1)
-    //       = (I + Q R)^(-1)
-    //       = (Q (Q^T + R))^(-1)
-    //       = (Q^T + R)^(-1) Q^T
+    //     I + U D Vt = U * (D + U^T Vt^T) * Vt
     //
-    // This avoids explicitly forming I + Q R.
-    Eigen::MatrixXd Qt = Q.transpose();
-    Eigen::MatrixXd system = Qt + R_total;
+    // Therefore:
+    //
+    //     G = Vt^T * (D + U^T Vt^T)^(-1) * U^T
+
+    Eigen::MatrixXd Ut = U.transpose();
+    Eigen::MatrixXd V = Vt.transpose();
+
+    Eigen::MatrixXd middle = Ut * V;
+
+    for (int i = 0; i < num_sites_; ++i) {
+        middle(i, i) += D(i);
+    }
+
+    Eigen::MatrixXd solved =
+        middle.fullPivLu().solve(Ut);
 
     Eigen::MatrixXd G =
-        system.partialPivLu().solve(Qt);
+        V * solved;
 
     return G;
 }
@@ -159,7 +175,6 @@ void GreensEngine::recompute_all_from_scratch(
     const InteractionConfig& config
 ) {
     if (stabilize_) {
-        // Safe: compute_stabilized_greens uses only local workspaces.
         #pragma omp parallel sections
         {
             #pragma omp section

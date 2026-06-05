@@ -120,7 +120,7 @@ int main() {
     int measurement_sweeps = 5000;
 
     // Used both as Green's reinversion frequency and stabilization stride.
-    int reinversion_frequency = 10;
+    int reinversion_frequency = 1;
 
     std::vector<double> U_values = {
         0.5, 1.0, 2.0, 4.0, 6.0, 8.0
