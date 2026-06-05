@@ -11,6 +11,10 @@ InteractionConfig::InteractionConfig(int num_sites, int num_slices, double U, do
     double exponent = (U * delta_tau) / 2.0;
     lambda_ = std::acosh(std::exp(exponent));
 
+    /// Precompute the only two possible exponential weights
+    exp_plus_lambda_  = std::exp(lambda_);
+    exp_minus_lambda_ = std::exp(-lambda_);
+
     // Allocate the space-time grid
     storage_.resize(num_slices_, std::vector<int>(num_sites_, 1));
 }
@@ -31,21 +35,26 @@ void InteractionConfig::randomize(unsigned int seed) {
     }
 }
 
-int InteractionConfig::get_spin(int site, int slice) const {
+int InteractionConfig::get_spin(int slice, int site) const {
     return storage_[slice][site];
 }
 
-void InteractionConfig::flip_spin(int site, int slice) {
+void InteractionConfig::flip_spin(int slice, int site) {
     storage_[slice][site] = -storage_[slice][site];
 }
 
 Eigen::VectorXd InteractionConfig::get_exponential_diagonal(int slice, double spin_factor) const {
     Eigen::VectorXd diag(num_sites_);
+    
+    // Determine which precomputed values correspond to s_il = +1 and s_il = -1
+    // If spin_factor == +1.0 (Up):   s=+1 -> e^λ,   s=-1 -> e^-λ
+    // If spin_factor == -1.0 (Down): s=+1 -> e^-λ,  s=-1 -> e^λ
+    double weight_if_plus_one  = (spin_factor > 0) ? exp_plus_lambda_  : exp_minus_lambda_;
+    double weight_if_minus_one = (spin_factor > 0) ? exp_minus_lambda_ : exp_plus_lambda_;
+
     for (int i = 0; i < num_sites_; ++i) {
-        // According to the formula, we need the matrix exp(v_sigma)
-        // Since v_sigma is diagonal, exp(v_sigma)_{ii} = exp(spin_factor * lambda * s(i, l))
-        double argument = spin_factor * lambda_ * storage_[slice][i];
-        diag(i) = std::exp(argument);
+        diag(i) = (storage_[slice][i] == 1) ? weight_if_plus_one : weight_if_minus_one;
     }
+    
     return diag;
 }

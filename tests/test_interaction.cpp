@@ -13,21 +13,21 @@ void test_interaction_config() {
 
     InteractionConfig config(N, L, U, delta_tau);
 
-    // Test default initialization (all spins initialized to 1)
+    // Test default initialization (all spins initialized to 1) using (slice, site)
     assert(config.get_spin(0, 0) == 1);
 
-    // Test flipping spin
+    // Test flipping spin at slice 0, site 0
     config.flip_spin(0, 0);
     assert(config.get_spin(0, 0) == -1);
 
     // Verify exponential calculation for spin up (factor = +1.0) on slice 0
-    // For site 0 (spin=-1): exp(+1.0 * lambda * -1) = exp(-lambda)
-    // For site 1 (spin=+1): exp(+1.0 * lambda * +1) = exp(+lambda)
     Eigen::VectorXd exp_diag = config.get_exponential_diagonal(0, 1.0);
 
     double expected_lambda = std::acosh(std::exp((U * delta_tau) / 2.0));
     
+    // Site 0 is flipped to -1: exp(1.0 * lambda * -1) = exp(-lambda)
     assert(std::abs(exp_diag(0) - std::exp(-expected_lambda)) < 1e-9);
+    // Site 1 remains +1: exp(1.0 * lambda * 1) = exp(lambda)
     assert(std::abs(exp_diag(1) - std::exp(expected_lambda)) < 1e-9);
 
     std::cout << "PASSED!" << std::endl;

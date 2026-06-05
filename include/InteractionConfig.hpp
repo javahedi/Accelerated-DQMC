@@ -7,6 +7,10 @@ private:
     int num_sites_;
     int num_slices_;
     double lambda_;
+
+    // New precomputed identifiers declared here:
+    double exp_plus_lambda_;  
+    double exp_minus_lambda_;
     
     // 2D storage: storage_[l][i] holds the spin at slice l, site i
     std::vector<std::vector<int>> storage_;
