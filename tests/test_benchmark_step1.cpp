@@ -1,61 +1,216 @@
 #include <iostream>
-#include <chrono>
+#include <cassert>
+#include <cmath>
+#include <Eigen/Dense>
+
 #include "SquareLattice.hpp"
 #include "KineticBuilder.hpp"
 #include "InteractionConfig.hpp"
 #include "GreensEngine.hpp"
 #include "DqmcSampler.hpp"
 
-int main() {
-    std::cout << "--- DQMC Optimization Benchmark: Step 1 ---\n";
+void assert_matrices_close(
+    const Eigen::MatrixXd& A,
+    const Eigen::MatrixXd& B,
+    double tol = 1e-7
+) {
+    assert(A.rows() == B.rows());
+    assert(A.cols() == B.cols());
 
-    // Use moderately heavy parameters to get a distinct time measurement
-    int L_size = 6; 
-    int num_sites = L_size * L_size;
-    int num_slices = 80; // High number of slices to make the matrix ops heavy
-    double beta = 4.0;
-    double delta_tau = beta / num_slices;
+    double max_diff = 0.0;
+    int max_i = 0;
+    int max_j = 0;
+
+    for (int i = 0; i < A.rows(); ++i) {
+        for (int j = 0; j < A.cols(); ++j) {
+            double diff = std::abs(A(i, j) - B(i, j));
+
+            if (diff > max_diff) {
+                max_diff = diff;
+                max_i = i;
+                max_j = j;
+            }
+        }
+    }
+
+    if (max_diff >= tol) {
+        std::cerr << "\nMatrix mismatch!\n";
+        std::cerr << "max_diff = " << max_diff
+                  << " at (" << max_i << ", " << max_j << ")\n";
+        std::cerr << "A(" << max_i << "," << max_j << ") = "
+                  << A(max_i, max_j) << "\n";
+        std::cerr << "B(" << max_i << "," << max_j << ") = "
+                  << B(max_i, max_j) << "\n";
+
+        assert(false);
+    }
+}
+
+void test_sherman_morrison_single_slice() {
+    std::cout << "Running test_sherman_morrison_single_slice... ";
+
+    int N = 2;
+    int L = 1;
     double t = 1.0;
-    double U = 4.0;
     double mu = 0.0;
+    double delta_tau = 0.1;
+    double U = 4.0;
 
-    SquareLattice lattice(L_size, L_size, true);
-    Eigen::MatrixXd k = KineticBuilder::buildKineticMatrix(lattice, t, mu, delta_tau);
-    InteractionConfig config(num_sites, num_slices, U, delta_tau);
+    SquareLattice lattice(N, 1, false);
+
+    Eigen::MatrixXd k =
+        KineticBuilder::buildKineticMatrix(
+            lattice,
+            t,
+            mu,
+            delta_tau
+        );
+
+    InteractionConfig config(N, L, U, delta_tau);
+
+    GreensEngine engine(N, L, k);
+    engine.recompute_all_from_scratch(config);
+
+    DqmcSampler sampler(N, L, k, 12345);
+    sampler.perform_sweep(config, engine);
+
+    GreensEngine reference_engine(N, L, k);
+    reference_engine.recompute_all_from_scratch(config);
+
+    assert_matrices_close(
+        engine.G_up(),
+        reference_engine.G_up(),
+        1e-8
+    );
+
+    assert_matrices_close(
+        engine.G_down(),
+        reference_engine.G_down(),
+        1e-8
+    );
+
+    std::cout << "PASSED!" << std::endl;
+}
+
+void test_sampler_many_sweeps_multi_slice() {
+    std::cout << "Running test_sampler_many_sweeps_multi_slice... ";
+
+    int width = 2;
+    int height = 2;
+    int N = width * height;
+    int L = 8;
+
+    double t = 1.0;
+    double mu = 0.0;
+    double delta_tau = 0.1;
+    double U = 4.0;
+
+    SquareLattice lattice(width, height, true);
+
+    Eigen::MatrixXd k =
+        KineticBuilder::buildKineticMatrix(
+            lattice,
+            t,
+            mu,
+            delta_tau
+        );
+
+    InteractionConfig config(N, L, U, delta_tau);
     config.randomize();
 
-    // Initialize with stabilization turned ON
-    GreensEngine engine(num_sites, num_slices, k, true, 5);
-    DqmcSampler sampler(num_sites, num_slices, k, 12345);
+    GreensEngine engine(N, L, k);
+    engine.recompute_all_from_scratch(config);
 
-    int warmups = 5;
-    int timed_sweeps = 50;
-    int reinversion_frequency = 2; // Forces frequent scratch recalculations
+    DqmcSampler sampler(N, L, k, 12345);
 
-    std::cout << "Warming up system...\n";
-    for(int s = 0; s < warmups; ++s) {
+    for (int sweep = 0; sweep < 100; ++sweep) {
         sampler.perform_sweep(config, engine);
+
+        GreensEngine reference_engine(N, L, k);
+        reference_engine.recompute_all_from_scratch(config);
+
+        assert_matrices_close(
+            engine.G_up(),
+            reference_engine.G_up(),
+            1e-7
+        );
+
+        assert_matrices_close(
+            engine.G_down(),
+            reference_engine.G_down(),
+            1e-7
+        );
+
+        // Optional refresh after comparison.
+        // This keeps the test focused on one sweep at a time and avoids
+        // accumulated floating-point drift from many rank-1 updates.
         engine.recompute_all_from_scratch(config);
     }
 
-    std::cout << "Running " << timed_sweeps << " timed sweeps with frequent re-inversions...\n";
-    
-    auto start_time = std::chrono::high_resolution_clock::now();
-    
-    for (int sweep = 0; sweep < timed_sweeps; ++sweep) {
-        sampler.perform_sweep(config, engine);
-        if ((sweep + 1) % reinversion_frequency == 0) {
-            engine.recompute_all_from_scratch(config);
-        }
-    }
-    
-    auto end_time = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> elapsed = end_time - start_time;
+    std::cout << "PASSED!" << std::endl;
+}
 
-    std::cout << "-------------------------------------------\n";
-    std::cout << "Total Elapsed Time: " << elapsed.count() << " seconds.\n";
-    std::cout << "Average Time per Sweep: " << (elapsed.count() / timed_sweeps) * 1000.0 << " ms.\n";
-    std::cout << "-------------------------------------------\n";
+void test_sampler_stabilized_engine_refresh() {
+    std::cout << "Running test_sampler_stabilized_engine_refresh... ";
+
+    int width = 2;
+    int height = 2;
+    int N = width * height;
+    int L = 12;
+
+    double t = 1.0;
+    double mu = 0.0;
+    double delta_tau = 0.1;
+    double U = 4.0;
+
+    SquareLattice lattice(width, height, true);
+
+    Eigen::MatrixXd k =
+        KineticBuilder::buildKineticMatrix(
+            lattice,
+            t,
+            mu,
+            delta_tau
+        );
+
+    InteractionConfig config(N, L, U, delta_tau);
+    config.randomize();
+
+    GreensEngine engine(N, L, k, true, 3);
+    engine.recompute_all_from_scratch(config);
+
+    DqmcSampler sampler(N, L, k, 98765);
+
+    for (int sweep = 0; sweep < 20; ++sweep) {
+        sampler.perform_sweep(config, engine);
+
+        GreensEngine reference_engine(N, L, k, true, 3);
+        reference_engine.recompute_all_from_scratch(config);
+
+        assert_matrices_close(
+            engine.G_up(),
+            reference_engine.G_up(),
+            1e-7
+        );
+
+        assert_matrices_close(
+            engine.G_down(),
+            reference_engine.G_down(),
+            1e-7
+        );
+
+        engine.recompute_all_from_scratch(config);
+    }
+
+    std::cout << "PASSED!" << std::endl;
+}
+
+int main() {
+    test_sherman_morrison_single_slice();
+    test_sampler_many_sweeps_multi_slice();
+    test_sampler_stabilized_engine_refresh();
+
+    std::cout << "Sampler tests completed successfully." << std::endl;
 
     return 0;
 }
