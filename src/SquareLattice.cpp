@@ -23,18 +23,43 @@ void SquareLattice::compute_neighbors() {
             int dx[] = {1, -1, 0, 0};
             int dy[] = {0, 0, 1, -1};
 
-            for (int d =0; d < 4; ++d) {
+            // for (int d =0; d < 4; ++d) {
+            //     int nx = x + dx[d];
+            //     int ny = y + dy[d];
+
+            //     if (periodic_) {
+            //         nx = (nx % width_  + width_) % width_;
+            //         ny = (ny % height_ + height_) % height_;
+            //         neighbors_[current_site].push_back(xy_to_index(nx,ny));
+            //     }else {
+            //         if (nx >= 0 && nx < width_ && ny >=0 && ny < height_) {
+            //             neighbors_[current_site].push_back(xy_to_index(nx,ny));
+            //         }
+            //     }
+            // }
+            for (int d = 0; d < 4; ++d) {
                 int nx = x + dx[d];
                 int ny = y + dy[d];
 
                 if (periodic_) {
                     nx = (nx % width_  + width_) % width_;
                     ny = (ny % height_ + height_) % height_;
-                    neighbors_[current_site].push_back(xy_to_index(nx,ny));
-                }else {
-                    if (nx >= 0 && nx < width_ && ny >=0 && ny < height_) {
-                        neighbors_[current_site].push_back(xy_to_index(nx,ny));
+                } else {
+                    if (nx < 0 || nx >= width_ || ny < 0 || ny >= height_) {
+                        continue; // Out of bounds for non-periodic
                     }
+                }
+
+                int neighbor_index = xy_to_index(nx, ny);
+
+                // 1. Prevent self-loops (e.g., 1x1 lattice or 1D chains wrapped)
+                if (neighbor_index == current_site) {
+                    continue;
+                }
+
+                // 2. Prevent duplicate multi-edges (common in 2x2 periodic grids)
+                if (std::find(neighbors_[current_site].begin(), neighbors_[current_site].end(), neighbor_index) == neighbors_[current_site].end()) {
+                    neighbors_[current_site].push_back(neighbor_index);
                 }
             }
         }
@@ -48,4 +73,18 @@ int SquareLattice::num_sites() const{
 
 std::vector<int> SquareLattice::get_neighbors(int site_index) const {
     return neighbors_[site_index];
+}
+
+// ============================================================================
+// Coordinate Mapping Resolvers
+// ============================================================================
+
+int SquareLattice::get_x(int site_index) const {
+    // Reverses: index = x + y * width
+    return site_index % width_;
+}
+
+int SquareLattice::get_y(int site_index) const {
+    // Reverses: index = x + y * width
+    return site_index / width_;
 }
