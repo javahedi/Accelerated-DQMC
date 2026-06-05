@@ -16,6 +16,7 @@ public:
 
     // Randomizes all spins to +1 or -1 (for initialization)
     void randomize();
+    void randomize(unsigned int seed);
 
     // Gets the spin value at a specific space-time point
     int get_spin(int site, int slice) const;

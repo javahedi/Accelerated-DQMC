@@ -15,8 +15,13 @@ InteractionConfig::InteractionConfig(int num_sites, int num_slices, double U, do
     storage_.resize(num_slices_, std::vector<int>(num_sites_, 1));
 }
 
+
 void InteractionConfig::randomize() {
-    std::mt19937 gen(42); // Fixed seed for reproducible tests
+    randomize(42);
+}
+
+void InteractionConfig::randomize(unsigned int seed) {
+    std::mt19937 gen(seed); // Use the provided seed
     std::uniform_int_distribution<> dis(0, 1);
 
     for (int l = 0; l < num_slices_; ++l) {
