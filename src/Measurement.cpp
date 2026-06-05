@@ -20,6 +20,7 @@ Measurement::Measurement(int num_sites)
     }
 }
 
+
 void Measurement::sample(
     const Eigen::MatrixXd& G_up,
     const Eigen::MatrixXd& G_down,

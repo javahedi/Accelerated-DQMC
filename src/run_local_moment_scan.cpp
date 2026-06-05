@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <cmath>
 
-
 #include "SquareLattice.hpp"
 #include "KineticBuilder.hpp"
 #include "InteractionConfig.hpp"
@@ -20,6 +19,8 @@ struct Result {
     double density;
     double double_occ;
     double local_moment;
+    double nn_spin_corr;
+    double af_structure_factor;
 };
 
 Result run_one_simulation(
@@ -40,20 +41,33 @@ Result run_one_simulation(
 
     double delta_tau = beta / static_cast<double>(num_slices);
 
-    double mu = 0.0; // half filling for shifted Hubbard interaction
+    // For shifted interaction U(n_up - 1/2)(n_down - 1/2),
+    // half filling is mu = 0.
+    double mu = 0.0;
 
     SquareLattice lattice(L_size, L_size, true);
 
     Eigen::MatrixXd k =
-        KineticBuilder::buildKineticMatrix(lattice, t, mu, delta_tau);
+        KineticBuilder::buildKineticMatrix(
+            lattice,
+            t,
+            mu,
+            delta_tau
+        );
 
     InteractionConfig config(num_sites, num_slices, U, delta_tau);
     config.randomize();
 
-    // MODIFIED: Toggle the 'stabilize' flag to true, and pass reinversion_frequency 
-    // as the stabilization stride to completely eliminate truncation errors at small T.
-    //GreensEngine engine(num_sites, num_slices, k, true, reinversion_frequency);
-    GreensEngine engine(num_sites, num_slices, k, false);
+    bool use_stabilization = true;
+
+    GreensEngine engine(
+        num_sites,
+        num_slices,
+        k,
+        use_stabilization,
+        reinversion_frequency
+    );
+
     engine.recompute_all_from_scratch(config);
 
     DqmcSampler sampler(num_sites, num_slices, k, seed);
@@ -76,7 +90,11 @@ Result run_one_simulation(
             engine.recompute_all_from_scratch(config);
         }
 
-        measurements.sample(engine.G_up(), engine.G_down());
+        measurements.sample(
+            engine.G_up(),
+            engine.G_down(),
+            lattice
+        );
     }
 
     measurements.normalize();
@@ -87,41 +105,51 @@ Result run_one_simulation(
         1.0 / beta,
         measurements.get_avg_density(),
         measurements.get_avg_double_occ(),
-        measurements.get_avg_local_moment()
+        measurements.get_avg_local_moment(),
+        measurements.get_nearest_neighbor_spin_corr(),
+        measurements.get_af_structure_factor()
     };
 }
 
 int main() {
     int L_size = 6;
     double t = 1.0;
-    // Discretization adjusted to stay safe within the Suzuki-Trotter boundaries
-    double target_delta_tau = 0.05; 
+    double target_delta_tau = 0.05;
 
     int equilibration_sweeps = 1000;
     int measurement_sweeps = 5000;
-    int reinversion_frequency = 1; // High frequency matches our QR pivot stabilization intervals
+
+    // Used both as Green's reinversion frequency and stabilization stride.
+    int reinversion_frequency = 10;
 
     std::vector<double> U_values = {
         0.5, 1.0, 2.0, 4.0, 6.0, 8.0
     };
 
-    std::vector<double> T_values = { 
-        100.0, 40.0, 20.0, 10.0, 5.0, 2.0, 1.0, 0.5, 0.25
+    std::vector<double> T_values = {
+        100.0, 40.0, 20.0, 10.0, 5.0,
+        2.0, 1.0, 0.5, 0.25
     };
 
-    std::ofstream file("local_moment_scan.csv");
+    std::ofstream file("dqmc_scan.csv");
 
     if (!file.is_open()) {
-        std::cerr << "Error: could not open local_moment_scan.csv\n";
+        std::cerr << "Error: could not open dqmc_scan.csv\n";
         return 1;
     }
 
-    file << "U,T,beta,density,double_occupancy,local_moment\n";
+    file
+        << "U,T,beta,L_tau,delta_tau,"
+        << "density,double_occupancy,local_moment,"
+        << "nn_spin_corr,af_structure_factor\n";
 
-    std::cout << "Starting stabilized local moment scan...\n";
+    std::cout << "Starting DQMC scan...\n";
     std::cout << "Lattice: " << L_size << "x" << L_size << "\n";
     std::cout << "t = " << t << "\n";
     std::cout << "target_delta_tau = " << target_delta_tau << "\n";
+    std::cout << "equilibration_sweeps = " << equilibration_sweeps << "\n";
+    std::cout << "measurement_sweeps = " << measurement_sweeps << "\n";
+    std::cout << "reinversion_frequency = " << reinversion_frequency << "\n";
 
     unsigned int seed = 12345;
 
@@ -134,9 +162,13 @@ int main() {
             double beta = 1.0 / T;
 
             int num_slices =
-                std::max(1, static_cast<int>(std::ceil(beta / target_delta_tau)));
+                std::max(
+                    1,
+                    static_cast<int>(std::ceil(beta / target_delta_tau))
+                );
 
-            double delta_tau = beta / static_cast<double>(num_slices);
+            double delta_tau =
+                beta / static_cast<double>(num_slices);
 
             std::cout
                 << "Running U=" << U
@@ -163,23 +195,29 @@ int main() {
                  << r.U << ","
                  << r.T << ","
                  << r.beta << ","
+                 << num_slices << ","
+                 << delta_tau << ","
                  << r.density << ","
                  << r.double_occ << ","
-                 << r.local_moment << "\n";
+                 << r.local_moment << ","
+                 << r.nn_spin_corr << ","
+                 << r.af_structure_factor << "\n";
 
             file.flush();
 
             std::cout
-                << "moment=" << r.local_moment
-                << ", density=" << r.density
+                << "density=" << r.density
                 << ", double_occ=" << r.double_occ
+                << ", moment=" << r.local_moment
+                << ", nn_spin=" << r.nn_spin_corr
+                << ", S_pi_pi=" << r.af_structure_factor
                 << "\n";
         }
     }
 
     file.close();
 
-    std::cout << "\nDone. Data saved to local_moment_scan.csv\n";
+    std::cout << "\nDone. Data saved to dqmc_scan.csv\n";
 
     return 0;
 }
